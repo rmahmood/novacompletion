@@ -1,0 +1,214 @@
+#!/bin/bash
+
+_HandleSubcommand ()
+{
+    local subcommand=$1
+    local prev=$2
+    local cur=$3
+
+    # Complete available flag names for the command.
+    if [[ $cur == -* ]]; then
+        compgen -W "`_ListNovaSubcommandFlags $subcommand`" -- $cur
+        return 0
+    fi
+
+    # Complete flag value based on the flag.
+    if [[ $prev == --* ]]; then
+        case "$prev" in
+            "--flavor")
+                compgen -W '$(nova flavor-list | _ExtractColumn 2)' -- $cur
+                ;;
+            "--image")
+                compgen -W '$(nova image-list | _ExtractColumn 2)' -- $cur
+                ;;
+            "--key-name")
+                compgen -W '$(nova keypair-list | _ExtractColumn 1)' -- $cur
+                ;;
+            "--security-groups")
+                compgen -W '$(nova secgroup-list | _ExtractColumn 1)' -- $cur
+                ;;
+            "--availability-zone")
+                compgen -W '$(nova availability-zone-list | _ExtractColumn 1)' -- $cur
+                ;;
+            "--nic")
+                compgen -W '$(nova network-list | _ExtractColumn 1 | xargs -n1 -I{} echo "net-id={}")' -- $cur
+                ;;
+        esac
+        return 0
+    elif [ "$prev" == "net-id" ]; then
+        compgen -W '$(nova network-list | _ExtractColumn 1)' -- $(echo $cur | tr -d '=')
+    elif [ "${COMP_WORDS[COMP_CWORD-2]}" == "net-id" ]; then
+        compgen -W '$(nova network-list | _ExtractColumn 1)' -- $cur
+    fi
+
+    # Match command positional arguments. This is currently very simple because
+    # no known command takes multiple positional arguments for which we can
+    # offer assistance.
+    case "$subcommand" in
+        "help")
+            compgen -W '`_ListNovaSubcommands`' -- $cur
+            ;;
+        "delete")
+            compgen -W '`_ListNovaDomainsNotInState BLESSED`' -- $cur
+            ;;
+        "live-image-export")
+            compgen -W '`_ListNovaDomainsInState BLESSED`' -- $cur
+            ;;
+        "discard")
+            compgen -W '`_ListNovaDomainsInState BLESSED`' -- $cur
+            ;;
+        "start")
+            compgen -W '`_ListNovaDomainsInState SHUTOFF`' -- $cur
+            ;;
+        "unpause")
+            compgen -W '`_ListNovaDomainsInState PAUSED`' -- $cur
+            ;;
+        "show")
+            compgen -W '`_ListAllNovaDomains`' -- $cur
+            ;;
+        "rename")
+            compgen -W '`_ListAllNovaDomains`' -- $cur
+            ;;
+        "live-image-create")
+            compgen -W '`_ListNovaDomainsInState ACTIVE`' -- $cur
+            ;;
+        "bless")
+            compgen -W '`_ListNovaDomainsInState ACTIVE`' -- $cur
+            ;;
+        "reboot")
+            compgen -W '`_ListNovaDomainsInState ACTIVE`' -- $cur
+            ;;
+        "pause")
+            compgen -W '`_ListNovaDomainsInState ACTIVE`' -- $cur
+            ;;
+        "get-vnc-console")
+            compgen -W '`_ListNovaDomainsInState ACTIVE`' -- $cur
+            ;;
+        "image-show")
+            compgen -W '$(nova image-list | _ExtractColumn 2)' -- $cur
+            ;;
+        "image-delete")
+            compgen -W '$(nova image-list | _ExtractColumn 2)' -- $cur
+            ;;
+        "flavor-show")
+            compgen -W '$(nova flavor-list | _ExtractColumn 2)' -- $cur
+            ;;
+        "flavor-delete")
+            compgen -W '$(nova flavor-list | _ExtractColumn 2)' -- $cur
+            ;;
+        "network-show")
+            compgen -W '$(nova network-list | _ExtractColumn 1)' -- $cur
+            ;;
+    esac
+
+    return 0
+}
+
+_NovaCompletion ()
+{
+    local cur
+
+    COMPREPLY=()
+
+    if [ "$COMP_CWORD" -lt "1" ]; then
+        return 1
+    fi
+
+    if [ "${COMP_WORDS[0]}" != "nova" ]; then
+        # Not a nova command.
+        return 1
+    fi
+
+    cur=${COMP_WORDS[COMP_CWORD]}
+
+    if [ "$COMP_CWORD" -lt "2" ]; then
+        # Not in a subcommand yet. The only expansion we can show is all
+        # available subcommands.
+        COMPREPLY=($(compgen -W '`_ListNovaSubcommands`' -- $cur))
+        return 0
+    fi
+
+    # We're in some nova subcommand context. Given that flags can appear in any
+    # order before positional arguments and some flags are shared between
+    # commands, we complete subcommands as follow. At every point, we the
+    # variable 'subcommand' holds what nova subcommand we're currently in. The
+    # 'prev' variable holds the word just before the word we're trying to
+    # complete.
+    subcommand=${COMP_WORDS[1]}
+    prev=${COMP_WORDS[COMP_CWORD-1]}
+
+    COMPREPLY=($(_HandleSubcommand $subcommand $prev $cur))
+    return 0
+}
+
+
+# Helper functions for processing output from nova cli.
+_TrimString ()
+{
+    sed 's/^ *//g' | sed 's/ *$//g'
+}
+
+# Strips the table header and bottom border from the nova cli output.
+_StripNovaOutputDecorations ()
+{
+    tail -n +4 | head -n -1
+}
+
+# Extracted the column number from a novaclient table. Columns are numbered from
+# the left and start at 1. Takes 1 argument specifying the column number.
+_ExtractColumn ()
+{
+    # Account for the extra column in awk due to the table left border.
+    local col=$(($1 + 1))
+    _StripNovaOutputDecorations | awk -F '|' "{print \$${col}}" | _TrimString
+}
+
+# List all available nova subcommands
+
+_ListNovaSubcommands ()
+{
+    nova help | grep -E '^    [^ ].*' | awk '{print $1}' | _TrimString
+}
+
+_ListNovaSubcommandFlags ()
+{
+    local subcommand=$1
+    nova help $subcommand | sed -e "s/usage: nova $subcommand / /g" | \
+        grep -E '^ +\[' | sed -e 's/ *\[/\n\[/g' | sed -e '/^$/d' | \
+        tr -d '[' | tr -d ']' | cut -d ' ' -f 1
+}
+
+# Generate lists of nova domains filtered in various ways.
+
+_ListNovaDomains()
+{
+    nova list | _StripNovaOutputDecorations
+}
+
+_NovaDomainsToIdsAndNames()
+{
+    awk -F '|' '{printf "%s\n%s\n", $2, $3}' | _TrimString
+}
+
+_ListAllNovaDomains ()
+{
+    _ListNovaDomains | _NovaDomainsToIdsAndNames
+}
+
+_ListNovaDomainsInState ()
+{
+    _ListNovaDomains | grep "$1" | _NovaDomainsToIdsAndNames
+}
+
+_ListNovaDomainsNotInState ()
+{
+    _ListNovaDomains | grep -v "$1" | _NovaDomainsToIdsAndNames
+}
+
+_NetIdLines ()
+{
+    nova network-list | _ExtractColumn 1 | awk '{printf "net-id=%s\n", $0}'
+}
+
+# complete -D -F _NovaCompletion nova
+complete -o bashdefault -o default -o nospace -F _NovaCompletion nova
