@@ -99,6 +99,18 @@ _HandleSubcommand ()
         "network-show")
             compgen -W '$(nova network-list | _ExtractColumn 1)' -- $cur
             ;;
+        "secgroup-list-rules")
+            compgen -W '$(nova secgroup-list | _ExtractColumn 1)' -- $cur
+            ;;
+        "secgroup-add-rule")
+            compgen -W '$(nova secgroup-list | _ExtractColumn 1)' -- $cur
+            ;;
+        "secgroup-delete")
+            compgen -W '$(nova secgroup-list | _ExtractColumn 1)' -- $cur
+            ;;
+        "keypair-delete")
+            compgen -W '$(nova keypair-list | _ExtractColumn 1)' -- $cur
+            ;;
     esac
 
     return 0
